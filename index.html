@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html ng-app="edgarDownloader">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Edgar Downloader</title>
+    <link rel="stylesheet" href="css/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/bootstrap-theme.min.css" />
+    <script>
+        window.jQuery = window.$ = require('jquery');
+    </script>
+    <script src="js/angular.min.js"></script>
+    <script src="js/bootstrap.min.js"></script>
+    <style type="text/css">
+      #statusPanel {
+        overflow: auto;
+        height: 150px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Welcome</h1>
+      <form class="form-horizontal" ng-controller="DownloaderController as dlCtrl">
+        <div class="form-group">
+          <label for="directory" class="col-sm-2 control-label">Edgar URL</label>
+          <div class="col-sm-10">
+            <input type="text" class="form-control" ng-model="edgarUrl" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="directory" class="col-sm-2 control-label">Full index</label>
+          <div class="col-sm-10">
+            <input type="text" class="form-control" ng-model="edgarFullIndexUrl" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="directory" class="col-sm-2 control-label">Directory</label>
+          <div class="col-sm-10">
+            <div class="input-group">
+              <input type="text" class="form-control" placeholder="Choose a directory" ng-model="saveDirectory" />
+              <span class="input-group-btn">
+                <button class="btn btn-default" type="button" ng-click="chooseDir()">Browse</button>
+                <button class="btn btn-default" type="button" ng-click="chooseDownloadsFolder()">Downloads folder</button>
+                <button class="btn btn-default" type="button" ng-click="openDir()" ng-disabled="!saveDirectory">Open folder</button>
+              </span>
+            </div><!-- /input-group -->
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="directory" class="col-sm-2 control-label">Start</label>
+          <div class="col-sm-5">
+            <div class="input-group">
+              <input type="text" class="form-control" aria-label="..." ng-model="startYear">
+              <div class="input-group-btn">
+                <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Year <span class="caret"></span></button>
+                <ul class="dropdown-menu dropdown-menu-right">
+                  <li ng-repeat="n in range(1993)" ng-click="setStartYear(n)" ng-hide="endYear && n > endYear"><a href="#">{{n}}</a></li>
+                </ul>
+              </div><!-- /btn-group -->
+            </div><!-- /input-group -->
+          </div><!-- /.col-sm-5 -->
+          <div class="col-sm-5">
+            <div class="input-group">
+              <input type="text" class="form-control" aria-label="..." ng-model="startQuarter">
+              <div class="input-group-btn">
+                <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Quarter <span class="caret"></span></button>
+                <ul class="dropdown-menu dropdown-menu-right">
+                  <li ng-repeat="n in range(1,4)" ng-click="setStartQuarter(n)" ng-hide="!startYear || (startYear === 1993 && n < 3) || (startYear === endYear && endQuarter && n > endQuarter)"><a href="#">{{n}}</a></li>
+                </ul>
+              </div><!-- /btn-group -->
+            </div><!-- /input-group -->
+          </div><!-- /.col-sm-5 -->
+        </div>
+        <div class="form-group">
+          <label for="directory" class="col-sm-2 control-label">End</label>
+          <div class="col-sm-5">
+            <div class="input-group">
+              <input type="text" class="form-control" aria-label="..." ng-model="endYear">
+              <div class="input-group-btn">
+                <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Year <span class="caret"></span></button>
+                <ul class="dropdown-menu dropdown-menu-right">
+                  <li ng-repeat="n in range(1993)" ng-click="setEndYear(n)" ng-hide="startYear && n < startYear"><a href="#">{{n}}</a></li>
+                </ul>
+              </div><!-- /btn-group -->
+            </div><!-- /input-group -->
+          </div><!-- /.col-sm-5 -->
+          <div class="col-sm-5">
+            <div class="input-group">
+              <input type="text" class="form-control" aria-label="..." ng-model="endQuarter">
+              <div class="input-group-btn">
+                <button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Quarter <span class="caret"></span></button>
+                <ul class="dropdown-menu dropdown-menu-right">
+                  <li ng-repeat="n in range(1,4)" ng-click="setEndQuarter(n)" ng-hide="!endYear || (endYear === 1993 && n < 3) || (endYear && startYear === endYear && startQuarter && startQuarter > n)"><a href="#">{{n}}</a></li>
+                </ul>
+              </div><!-- /btn-group -->
+            </div><!-- /input-group -->
+          </div><!-- /.col-sm-5 -->
+        </div>
+        <div class="form-group">
+          <label for="directory" class="col-sm-2 control-label">Index</label>
+          <div class="col-sm-10">
+            <div class="input-group">
+              <input type="text" class="form-control" placeholder="Index source" ng-model="indexSrc">
+              <span class="input-group-btn">
+                <button class="btn btn-default" type="button" ng-click="generateIndexURL()" ng-disabled="!startYear || !startQuarter || !endYear || !endQuarter">Generate index URL</button>
+              </span>
+            </div><!-- /input-group -->
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="col-sm-offset-2 col-sm-10">
+            <button class="btn btn-default" type="button" ng-click="downloadIndex()" ng-disabled="!saveDirectory || !indexSrc">Download indexes</button>
+            <button type="button" class="btn btn-default" ng-click="extractIndex()" ng-disabled="!saveDirectory || !indexSrc">Extract indexes</button>
+            <button type="button" class="btn btn-default" ng-click="download10K()" ng-disabled="!saveDirectory || !indexSrc">Get 10-K</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="directory" class="col-sm-2 control-label">Status</label>
+          <div class="col-sm-8">
+            <div class="panel panel-default">
+              <div id="statusPanel" class="panel-body" style="white-space: pre-line;"></div>
+            </div>
+          </div>
+          <div class="col-sm-2">
+            <button type="button" class="btn btn-default" ng-click="clearStatus()">Clear status</button>
+          </div>
+        </div>
+      </form>
+      <div class="col-sm-offset-2 col-sm-10">
+        Edgar Downloader 0.1.0 written by <a href="mailto:fancyydk@gmail.com">Dongyon Kang</a>
+      </div>
+    </div>
+  </body>
+
+  <script>
+    // You can also require other files to run in this process
+    require('./js/renderer.js');
+    
+    const {ipcRenderer} = require('electron');
+    const path = require('path');
+
+    angular.module('edgarDownloader', [])
+      .controller('DownloaderController', ['$scope', function ($scope) {
+        var downloader = this;
+        $scope.saveDirectory = '';
+        $scope.startYear = '';
+        $scope.startQuarter = '';
+        $scope.endYear = '';
+        $scope.endQuarter = '';
+        $scope.edgarUrl = 'https://www.sec.gov/Archives/';
+        $scope.edgarFullIndexUrl = 'https://www.sec.gov/Archives/edgar/full-index/';
+        $scope.status = '';
+
+        $scope.range = function (min, max, step) {
+          step = step || 1;
+          max = max || (new Date()).getFullYear();
+          var input = [];
+          for (var i = min; i <= max; i += step) {
+            input.push(i);
+          }
+          return input;
+        };
+        $scope.setSaveDirectory = function (dir) {
+          $scope.saveDirectory = dir;
+        }
+        $scope.chooseDir = function () {
+          $scope.saveDirectory = ipcRenderer.sendSync('choose-dir');
+        };
+        $scope.chooseDownloadsFolder = function () {
+          $scope.saveDirectory = ipcRenderer.sendSync('choose-dir', 'downloads') + path.sep;
+        }
+        $scope.openDir = function () {
+          ipcRenderer.send('open-dir', $scope.saveDirectory);
+        };
+        $scope.setStartYear = function (n) {
+          console.log(n);
+          $scope.startYear = n;
+        };
+        $scope.setStartQuarter = function (n) {
+          console.log(n);
+          $scope.startQuarter = n;
+        };
+        $scope.setEndYear = function (n) {
+          console.log(n);
+          $scope.endYear = n;
+        };
+        $scope.setEndQuarter = function (n) {
+          console.log(n);
+          $scope.endQuarter = n;
+        };
+        $scope.generateIndexURL = function () {
+          var urls = [];
+          for (var i = $scope.startYear; i <= $scope.endYear; i++) {
+            var startQuarter = (i == $scope.startYear) ? $scope.startQuarter : 1;
+            var endQuarter = (i == $scope.endYear) ? $scope.endQuarter : 4;
+
+            for (var j = startQuarter; j <= endQuarter; j++) {
+              var urlInfo = {};
+              urlInfo.year = i.toString();
+              urlInfo.quarter = j.toString();
+              urlInfo.url = path.join($scope.edgarFullIndexUrl, urlInfo.year, 'QTR', urlInfo.quarter, 'company.idx');
+              urls.push(urlInfo);
+            }
+          }
+          $scope.indexSrc = JSON.stringify({ urls: urls, edgarUrl: $scope.edgarUrl });
+        };
+        $scope.downloadIndex = function () {
+          ipcRenderer.send('download-index', $scope.saveDirectory, $scope.indexSrc);
+        };
+        $scope.extractIndex = function () {
+          ipcRenderer.send('extract-index', $scope.saveDirectory, $scope.indexSrc);
+        };
+        $scope.download10K = function () {
+          ipcRenderer.send('download-10k', $scope.saveDirectory, $scope.indexSrc);
+        };
+        $scope.logStatus = function (msg) {
+          var curTime = new Date();
+          var timestamp = '[' + curTime.getFullYear() + '-' + (curTime.getMonth() + 1) + '-' + curTime.getDate() + ' ' + curTime.getHours() + ':' + curTime.getMinutes() + ':' + curTime.getSeconds() + ']';
+          var statusPanel = document.getElementById('statusPanel');
+          statusPanel.innerHTML += (statusPanel.innerHTML ? '\n' : '') + timestamp + ' ' + msg;
+        };
+        $scope.clearStatus = function () {
+          document.getElementById('statusPanel').innerHTML = '';
+        }
+
+        ipcRenderer.on('status-report', (event, arg) => {
+          $scope.logStatus(arg);
+        });
+      }]);
+  </script>
+</html>
