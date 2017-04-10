@@ -12,6 +12,11 @@ const BrowserWindow = electron.BrowserWindow
 
 const path = require('path');
 const url = require('url');
+const downloadRequestTimeout = 250; // 250 milliseconds = 0.25 seconds
+
+let formTypes = [
+  '10-K'
+];
 
 // Keep a global reference of the window object, if you don't, the window will
 // be closed automatically when the JavaScript object is garbage collected.
@@ -19,7 +24,7 @@ let mainWindow;
 
 function createWindow () {
   // Create the browser window.
-  mainWindow = new BrowserWindow({width: 1000, height: 700});
+  mainWindow = new BrowserWindow({width: 1000, height: 800});
 
   // and load the index.html of the app.
   mainWindow.loadURL(url.format({
@@ -71,6 +76,8 @@ ipcMain.on('choose-dir', (event, arg) => {
     dialog.showOpenDialog({properties: ['openDirectory']}, (filePaths) => {
       if (filePaths && filePaths[0]) {
         event.returnValue = filePaths[0];
+      } else {
+        event.returnValue = '';
       }
     });
   }
@@ -80,115 +87,150 @@ ipcMain.on('open-dir', (event, arg) => {
   shell.openItem(arg);
 });
 
-var iterateOverUrlArray = function (saveDirectory, indexSrc, callback) {
-  var indexSrcInfo = JSON.parse(indexSrc);
-  var urlInfoArray = indexSrcInfo.urls;
+let unlinkFileAndRemoveDir = function (event, dirPath, filePath) {
+  fs.unlink(filePath, (err) => {
+    if (err && err.code === 'ENOENT') {
+      event.sender.send('status-report', 'Error: file does not exist and cannot be deleted. (' + err.code + ')');
+    } else if (err) {
+      event.sender.send('status-report', 'Error: an error occurred. (' + err.code + ')');
+    } else {
+      jetpack.removeAsync(dirPath);
+    }
+  });
+}
+
+let iterateOverUrlArray = function (saveDirectory, indexSrc, callback) {
+  let promises = [];
+  let indexSrcInfo = JSON.parse(indexSrc);
+  let urlInfoArray = indexSrcInfo.urls;
   urlInfoArray.forEach((urlInfo) => {
-    var year = urlInfo.year;
-    var quarter = urlInfo.quarter;
-    var parsed = url.parse(urlInfo.url);
-    var dirPath = path.join(saveDirectory, year, 'QTR' + quarter);
-    jetpack.dir(dirPath);
-    callback(indexSrcInfo.edgarUrl, urlInfo, year, quarter, parsed, dirPath);
+    let year = urlInfo.year;
+    let quarter = urlInfo.quarter;
+    let parsed = url.parse(urlInfo.url);
+    let dirPath = path.join(saveDirectory, year, 'QTR' + quarter);
+    promises.push(callback(indexSrcInfo.edgarUrl, urlInfo, year, quarter, parsed, dirPath));
+  });
+  return promises;
+};
+
+let downloadFile = function (event, url, dirPath, filePath) {
+  jetpack.dirAsync(dirPath).then(() => {
+    try {
+      let file = fs.createWriteStream(filePath);
+      let sendReq = request.get(url);
+
+      sendReq
+        .on('response', function (response) {
+          // verify response code
+          if (response.statusCode !== 200) {
+            event.sender.send('download-failure');
+            event.sender.send('status-report', 'Error: response status was ' + response.statusCode);
+            unlinkFileAndRemoveDir(event, dirPath, filePath);
+          }
+        })
+        .on('error', function (err) {
+          // check for request errors
+          event.sender.send('download-failure');
+          event.sender.send('status-report', 'Error: ' + err.message);
+          unlinkFileAndRemoveDir(event, dirPath, filePath);
+          return;
+        })
+        .pipe(file);
+
+      file
+        .on('finish', function() {
+          try {
+            file.close(() => {
+              event.sender.send('download-success');
+              event.sender.send('status-report', 'saved to ' + filePath);
+            });  // close() is async, call cb after close completes.
+          } catch (exception) {
+            event.sender.send('download-failure');
+            event.sender.send('status-report', 'Error: ' + exception.message);
+            unlinkFileAndRemoveDir(event, dirPath, filePath);
+          }
+        })
+        .on('error', function(err) { // Handle errors
+          event.sender.send('download-failure');
+          event.sender.send('status-report', 'Error: ' + err.message);
+          unlinkFileAndRemoveDir(event, dirPath, filePath);
+          return;
+        });
+    } catch (exception) {
+      event.sender.send('download-failure');
+      event.sender.send('status-report', 'Error: ' + exception.message);
+      unlinkFileAndRemoveDir(event, dirPath, filePath);
+      return;
+    }
   });
 };
 
-var downloadFile = function (event, url, filePath) {
-  try {
-    var file = fs.createWriteStream(filePath);
-    var sendReq = request.get(url);
-
-    sendReq
-      .on('response', function (response) {
-        // verify response code
-        if (response.statusCode !== 200) {
-          event.sender.send('status-report', 'Error: response status was ' + response.statusCode);
-          fs.unlink(filePath, (err) => {
-            event.sender.send('status-report', 'Error: ' + err.message);
-          });
-        }
-      })
-      .on('error', function (err) {
-        // check for request errors
-        event.sender.send('status-report', 'Error: ' + err.message);
-        fs.unlink(filePath, (err) => {
-          event.sender.send('status-report', 'Error: ' + err.message);
-        });
-        return;
-      })
-      .pipe(file);
-
-    file.on('finish', function() {
-      try {
-        file.close(() => {
-          event.sender.send('status-report', 'saved to ' + filePath);
-        });  // close() is async, call cb after close completes.
-      } catch (exception) {
-        event.sender.send('status-report', 'Error: ' + exception.message);
-      }
-    });
-
-    file.on('error', function(err) { // Handle errors
-      event.sender.send('status-report', 'Error: ' + err.message);
-      fs.unlink(filePath, (err) => {
-        event.sender.send('status-report', 'Error: ' + err.message);
-      }); // Delete the file async. (But we don't check the result)
-      return;
-    });
-  } catch (exception) {
-    event.sender.send('status-report', 'Error: ' + exception.message);
-    return;
-  }
-};
-
-ipcMain.on('download-10k', (event, saveDirectory, indexSrc) => {
+ipcMain.on('download-forms', (event, saveDirectory, indexSrc) => {
+  let requestTimeout = 0;
   iterateOverUrlArray(saveDirectory, indexSrc, (edgarUrl, urlInfo, year, quarter, parsed, dirPath) => {
-    var fileName = '10K.json';
-    var filePath = path.join(dirPath, fileName);
+    let fileName = 'forms.json';
+    let filePath = path.join(dirPath, fileName);
     jetpack.readAsync(filePath).then((data) => {
-      var tenKs = JSON.parse(data);
-      tenKs.forEach((tenK) => {
-        var tenKDir = path.join(dirPath, tenK.CIK);
-        var tenKFilePath = path.join(tenKDir, path.basename(tenK.url));
-        jetpack.dir(tenKDir);
-        downloadFile(event, edgarUrl + tenK.url, tenKFilePath);
+      let forms = JSON.parse(data);
+      forms.forEach((form) => {
+        let formDir = path.join(dirPath, form.CIK);
+        let formFilePath = path.join(formDir, path.basename(form.url));
+        setTimeout(() => {
+          downloadFile(event, edgarUrl + form.url, formDir, formFilePath);
+        }, requestTimeout);
+        requestTimeout += downloadRequestTimeout;
       });
     });
   });  
 });
 
 ipcMain.on('extract-index', (event, saveDirectory, indexSrc) => {
-  iterateOverUrlArray(saveDirectory, indexSrc, (edgarUrl, urlInfo, year, quarter, parsed, dirPath) => {
-    var tenKs = [];
-    var fileName = '10K.json';
-    var filePath = path.join(dirPath, fileName);
-    var indexPath = path.join(dirPath, 'company.idx');
-    jetpack.readAsync(indexPath).then((data) => {
-      var lines = data.split('\n');
-      lines.forEach((line) => {
-        var formType = line.substring(62, 74).trim();
-        var CIK = line.substring(74, 86).trim();
-        var url = line.substring(98).trim();
-        if (formType === '10-K') {
-          tenKs.push({ formType: formType, CIK: CIK, url: url });
+  let totalFormsToDownload = 0;
+  let promises = iterateOverUrlArray(saveDirectory, indexSrc, (edgarUrl, urlInfo, year, quarter, parsed, dirPath) => {
+    let promise = new Promise((resolve, reject) => {
+      let forms = [];
+      let fileName = 'forms.json';
+      let filePath = path.join(dirPath, fileName);
+      let indexPath = path.join(dirPath, 'company.idx');
+      jetpack.readAsync(indexPath).then((data) => {
+        let lines = data.split('\n');
+        lines.forEach((line) => {
+          let formType = line.substring(62, 74).trim();
+          let CIK = line.substring(74, 86).trim();
+          let url = line.substring(98).trim();
+          if (formTypes.includes(formType)) {
+            forms.push({ formType: formType, CIK: CIK, url: url });
+          }
+        });
+
+        if (forms.length > 0) {
+          totalFormsToDownload += forms.length;
+          jetpack.writeAsync(filePath, forms).then(() => {
+            event.sender.send('status-report', 'saved to ' + filePath);
+            resolve();
+          });
+        } else {
+          event.sender.send('status-report', 'No forms in ' + year + '/QTR' + quarter);
+          resolve();
         }
       });
-
-      if (tenKs.length > 0) {
-        jetpack.writeAsync(filePath, tenKs).then(() => {
-          event.sender.send('status-report', 'saved to ' + filePath);
-        });
-      } else {
-        event.sender.send('status-report', 'No 10-K in ' + year + '/QTR' + quarter);
-      }
     });
+    return promise;
+  });
+
+  Promise.all(promises).then(() => {
+    mainWindow.webContents.send('num-forms', totalFormsToDownload);
   });
 });
 
 ipcMain.on('download-index', (event, saveDirectory, indexSrc) => {
+  let requestTimeout = 0;
   iterateOverUrlArray(saveDirectory, indexSrc, (edgarUrl, urlInfo, year, quarter, parsed, dirPath) => {
-    var fileName = path.basename(parsed.pathname);
-    var filePath = path.join(dirPath, fileName);
-    downloadFile(event, urlInfo.url, filePath);
+    let fileName = path.basename(parsed.pathname);
+    let filePath = path.join(dirPath, fileName);
+    setTimeout(() => {
+      downloadFile(event, urlInfo.url, dirPath, filePath);
+    }, requestTimeout);
+    requestTimeout += downloadRequestTimeout;
   });
 });
