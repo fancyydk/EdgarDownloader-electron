@@ -24,7 +24,7 @@ let mainWindow;
 
 function createWindow () {
   // Create the browser window.
-  mainWindow = new BrowserWindow({width: 1000, height: 800});
+  mainWindow = new BrowserWindow({width: 1200, height: 800});
 
   // and load the index.html of the app.
   mainWindow.loadURL(url.format({
@@ -124,14 +124,14 @@ let downloadFile = function (event, url, dirPath, filePath) {
           // verify response code
           if (response.statusCode !== 200) {
             event.sender.send('download-failure');
-            event.sender.send('status-report', 'Error: response status was ' + response.statusCode);
+            event.sender.send('status-report', 'Error: failed to download ' + url + ' to ' + filePath + '. response status was ' + response.statusCode);
             unlinkFileAndRemoveDir(event, dirPath, filePath);
           }
         })
         .on('error', function (err) {
           // check for request errors
           event.sender.send('download-failure');
-          event.sender.send('status-report', 'Error: ' + err.message);
+          event.sender.send('status-report', 'Error: failed to download ' + url + ' to ' + filePath + '. ' + err.message);
           unlinkFileAndRemoveDir(event, dirPath, filePath);
           return;
         })
@@ -146,19 +146,19 @@ let downloadFile = function (event, url, dirPath, filePath) {
             });  // close() is async, call cb after close completes.
           } catch (exception) {
             event.sender.send('download-failure');
-            event.sender.send('status-report', 'Error: ' + exception.message);
+            event.sender.send('status-report', 'Error: failed to download ' + url + ' to ' + filePath + '. ' + exception.message);
             unlinkFileAndRemoveDir(event, dirPath, filePath);
           }
         })
         .on('error', function(err) { // Handle errors
           event.sender.send('download-failure');
-          event.sender.send('status-report', 'Error: ' + err.message);
+          event.sender.send('status-report', 'Error: failed to download ' + url + ' to ' + filePath + '. ' + err.message);
           unlinkFileAndRemoveDir(event, dirPath, filePath);
           return;
         });
     } catch (exception) {
       event.sender.send('download-failure');
-      event.sender.send('status-report', 'Error: ' + exception.message);
+      event.sender.send('status-report', 'Error: failed to download ' + url + ' to ' + filePath + '. ' + exception.message);
       unlinkFileAndRemoveDir(event, dirPath, filePath);
       return;
     }
@@ -229,6 +229,7 @@ ipcMain.on('download-index', (event, saveDirectory, indexSrc) => {
     let fileName = path.basename(parsed.pathname);
     let filePath = path.join(dirPath, fileName);
     setTimeout(() => {
+      event.sender.send('status-report', 'started downloading ' + urlInfo.url);
       downloadFile(event, urlInfo.url, dirPath, filePath);
     }, requestTimeout);
     requestTimeout += downloadRequestTimeout;
